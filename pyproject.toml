@@ -1,14 +1,11 @@
 [project]
 name = "ollama-app"
 version = "0.1.0"
-description = "A RAG app using Ollama with cat facts dataset"
+description = "A RAG app using Groq and HF API"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.9"
 dependencies = [
     "groq>=0.11.0",
-    "sentence-transformers>=3.0.0",
-    "streamlit>=1.59.2",
-    "numpy>=2.5.1",
-    "pandas>=2.0.0",
-    "matplotlib>=3.7.0",
+    "requests",
+    "streamlit>=1.30.0",
 ]
