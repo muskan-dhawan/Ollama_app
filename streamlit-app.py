@@ -1,13 +1,13 @@
 import streamlit as st
 import os
 import random
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 from groq import Groq
 
 st.set_page_config(page_title="Particle Physics RAG Assistant", page_icon="⚛️", layout="wide")
 
 # Model Configurations
-EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
+EMBEDDING_MODEL = 'sentence-transformers/all-MiniLM-L6-v2'
 LANGUAGE_MODEL = 'llama3-8b-8192'
 DATASET_PATH = 'physics-facts.txt'
 
@@ -24,7 +24,7 @@ with st.sidebar:
             st.session_state.random_fact_requested = False
 
     st.divider()
-    st.caption("Engine: Groq + Sentence Transformers")
+    st.caption("Engine: Groq + FastEmbed")
     st.caption(f"Embeddings: `{EMBEDDING_MODEL}`")
     st.caption(f"LLM: `{LANGUAGE_MODEL}`")
 
@@ -48,7 +48,7 @@ client = Groq(api_key=api_key)
 # --- 1. Vector DB Setup & Caching ---
 @st.cache_resource
 def load_embedding_model():
-    return SentenceTransformer(EMBEDDING_MODEL)
+    return TextEmbedding(model_name=EMBEDDING_MODEL)
 
 @st.cache_resource
 def initialize_vector_db():
@@ -81,7 +81,8 @@ def initialize_vector_db():
             continue
         status_text.text(f"Embedding chunk {i+1}/{len(dataset)}...")
         try:
-            embedding = embedder.encode(chunk).tolist()
+            # fastembed returns an iterator of numpy arrays
+            embedding = list(embedder.embed([chunk]))[0].tolist()
             vector_db.append((chunk, embedding))
         except Exception as e:
             st.error(f"Error generating embeddings: {e}")
@@ -108,7 +109,7 @@ def cosine_similarity(a, b):
 def retrieve(query, vector_db, top_k=5):
     """Finds the top_k most relevant chunks for a given query."""
     embedder = load_embedding_model()
-    query_embedding = embedder.encode(query).tolist()
+    query_embedding = list(embedder.embed([query]))[0].tolist()
     similarities = []
     for chunk, embedding in vector_db:
         similarity = cosine_similarity(query_embedding, embedding)
