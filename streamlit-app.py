@@ -1,13 +1,13 @@
 import streamlit as st
 import os
 import random
-import requests
+import math
+from collections import Counter
 from groq import Groq
 
 st.set_page_config(page_title="Particle Physics RAG Assistant", page_icon="⚛️", layout="wide")
 
 # Model Configurations
-EMBEDDING_MODEL = 'sentence-transformers/all-MiniLM-L6-v2'
 LANGUAGE_MODEL = 'llama-3.1-8b-instant'
 DATASET_PATH = 'physics-facts.txt'
 
@@ -24,17 +24,16 @@ with st.sidebar:
             st.session_state.random_fact_requested = False
 
     st.divider()
-    st.caption("Engine: Groq + Hugging Face API")
-    st.caption(f"Embeddings: `{EMBEDDING_MODEL}`")
+    st.caption("Engine: Groq + Local TF-IDF Search")
+    st.caption("Embeddings: `Pure Python TF-IDF`")
     st.caption(f"LLM: `{LANGUAGE_MODEL}`")
 
 # Main Page
 st.title("⚛️ Particle Physics RAG Assistant")
-st.write("Ask any question about particle physics! This app retrieves relevant facts from a local vector database and uses a fast cloud LLM via Groq to generate an answer.")
+st.write("Ask any question about particle physics! This app retrieves relevant facts from a local database and uses a fast cloud LLM via Groq to generate an answer.")
 
 # Check for API Keys
 groq_api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
-hf_token = st.secrets.get("HF_TOKEN", os.environ.get("HF_TOKEN", "")) # Ensure HF_TOKEN is in Streamlit secrets
 
 if not groq_api_key:
     st.error("Missing GROQ_API_KEY. Please set it in Streamlit secrets.")
@@ -43,11 +42,9 @@ if not groq_api_key:
 # Initialize Groq client
 client = Groq(api_key=groq_api_key)
 
-# --- 1. Vector DB Setup & Caching (Hugging Face API) ---
-@st.cache_resource
-def initialize_vector_db():
-    """Loads the dataset and computes embeddings via HF API, caching the results."""
-    
+# --- 1. Dataset Setup ---
+@st.cache_data
+def load_dataset():
     if not os.path.exists(DATASET_PATH):
         with open(DATASET_PATH, 'w', encoding="utf-8") as f:
             f.write("1. The Standard Model of particle physics classifies all known elementary particles.\n")
@@ -57,84 +54,59 @@ def initialize_vector_db():
             f.write("5. The Higgs boson is responsible for giving mass to other fundamental particles.\n")
 
     with open(DATASET_PATH, 'r', encoding="utf-8") as file:
-        dataset = file.readlines()
-    
-    vector_db = []
-    
-    status_text = st.empty()
-    progress_bar = st.progress(0)
-    
-    api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
-    headers = {"Authorization": f"Bearer {hf_token}"}
-    
-    for i, chunk in enumerate(dataset):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        status_text.text(f"Embedding chunk {i+1}/{len(dataset)} via HuggingFace API...")
-        try:
-            response = requests.post(api_url, headers=headers, json={"inputs": chunk, "options": {"wait_for_model": True}})
-            response.raise_for_status()
-            embedding = response.json()
-            # If the response is nested (e.g. [[...]]), extract the first element
-            if isinstance(embedding, list) and len(embedding) > 0 and isinstance(embedding[0], list):
-                 embedding = embedding[0]
-            vector_db.append((chunk, embedding))
-        except Exception as e:
-            st.error(f"Error generating embeddings: {e}")
-            return [], dataset
-        progress_bar.progress((i + 1) / len(dataset))
-        
-    status_text.empty()
-    progress_bar.empty()
-    return vector_db, dataset
+        dataset = [line.strip() for line in file.readlines() if line.strip()]
+    return dataset
 
-# --- 2. Cosine Similarity ---
-def cosine_similarity(a, b):
-    dot_product = sum([x * y for x, y in zip(a, b)])
-    norm_a = sum([x ** 2 for x in a]) ** 0.5
-    norm_b = sum([x ** 2 for x in b]) ** 0.5
-    if norm_a == 0 or norm_b == 0:
-        return 0
-    return dot_product / (norm_a * norm_b)
+raw_dataset = load_dataset()
 
-
-# --- 3. Retriever ---
-def retrieve(query, vector_db, top_k=5):
-    """Finds the top_k most relevant chunks for a given query via HF API."""
-    api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
-    headers = {"Authorization": f"Bearer {hf_token}"}
-    
-    response = requests.post(api_url, headers=headers, json={"inputs": query, "options": {"wait_for_model": True}})
-    query_embedding = response.json()
-    if isinstance(query_embedding, list) and len(query_embedding) > 0 and isinstance(query_embedding[0], list):
-        query_embedding = query_embedding[0]
-            
-    similarities = []
-    for chunk, embedding in vector_db:
-        similarity = cosine_similarity(query_embedding, embedding)
-        similarities.append((chunk, similarity))
-    similarities.sort(key=lambda x: x[1], reverse=True)
-    return similarities[:top_k]
-
-# --- 4. Initialize DB on first load ---
-vector_db, raw_dataset = initialize_vector_db()
-
-if vector_db:
-    st.success(f"✅ Vector DB loaded with {len(vector_db)} physics facts.")
+if raw_dataset:
+    st.success(f"✅ Database loaded with {len(raw_dataset)} physics facts.")
 else:
-    st.warning("⚠️ Vector DB is empty. Check your model and dataset.")
+    st.warning("⚠️ Database is empty. Check your dataset.")
+
+# --- 2. Pure Python TF-IDF Retriever ---
+def retrieve(query, dataset, top_k=3):
+    def tokenize(text):
+        return [w.strip('.,?!()[]{}"\'') for w in text.lower().split() if w.strip('.,?!()[]{}"\'')]
+    
+    tokenized_dataset = [tokenize(doc) for doc in dataset]
+    query_tokens = tokenize(query)
+    
+    if not query_tokens:
+        return []
+
+    # Calculate IDF
+    N = len(dataset)
+    idf = {}
+    for word in set(query_tokens):
+        df = sum(1 for doc in tokenized_dataset if word in doc)
+        idf[word] = math.log((N + 1) / (df + 1)) + 1
+        
+    # Calculate TF-IDF scores
+    scores = []
+    for i, doc in enumerate(tokenized_dataset):
+        score = 0
+        if not doc:
+            continue
+            
+        doc_counts = Counter(doc)
+        for word in query_tokens:
+            if word in doc_counts:
+                tf = doc_counts[word] / len(doc)
+                score += tf * idf[word]
+        scores.append((dataset[i], score))
+    
+    scores.sort(key=lambda x: x[1], reverse=True)
+    return scores[:top_k]
 
 # --- Random Fact Handler ---
 if st.session_state.random_fact_requested and raw_dataset:
-    valid_facts = [fact.strip() for fact in raw_dataset if fact.strip()]
-    if valid_facts:
-        random_fact = random.choice(valid_facts)
-        st.info(f"**Did you know?**\n\n{random_fact}", icon="💡")
+    random_fact = random.choice(raw_dataset)
+    st.info(f"**Did you know?**\n\n{random_fact}", icon="💡")
     st.session_state.random_fact_requested = False
 
 
-# --- 5. Chat Interface ---
+# --- 3. Chat Interface ---
 st.divider()
 st.subheader("Ask a question")
 
@@ -150,19 +122,28 @@ if prompt := st.chat_input("e.g. What is the Higgs boson?"):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    if not vector_db:
-        assistant_msg = "⚠️ Vector DB is not loaded. Cannot retrieve context."
+    if not raw_dataset:
+        assistant_msg = "⚠️ Database is not loaded. Cannot retrieve context."
         st.session_state.messages.append({"role": "assistant", "content": assistant_msg})
         with st.chat_message("assistant"):
             st.markdown(assistant_msg)
     else:
         with st.spinner("Retrieving relevant facts..."):
-            results = retrieve(prompt, vector_db, top_k=5)
-            context = '\n'.join([f"- {chunk}" for chunk, score in results])
+            results = retrieve(prompt, raw_dataset, top_k=3)
+            # Only include results with a score > 0
+            valid_results = [res for res in results if res[1] > 0]
+            
+            if not valid_results:
+                context = "No relevant facts found for your query."
+            else:
+                context = '\n'.join([f"- {chunk}" for chunk, score in valid_results])
 
         with st.expander("📚 Retrieved Context", expanded=False):
-            for chunk, score in results:
-                st.markdown(f"- **[{score:.3f}]** {chunk}")
+            if not valid_results:
+                st.markdown("No matching context found.")
+            else:
+                for chunk, score in valid_results:
+                    st.markdown(f"- **[Score: {score:.3f}]** {chunk}")
 
         system_prompt = f"""You are a helpful assistant that answers questions about particle physics using ONLY the context below.
 If the context does not contain the answer, say "I don't have enough information to answer that."
