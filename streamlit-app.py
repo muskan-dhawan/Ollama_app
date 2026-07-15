@@ -1,7 +1,7 @@
 import streamlit as st
 import os
 import random
-from fastembed import TextEmbedding
+import requests
 from groq import Groq
 
 st.set_page_config(page_title="Particle Physics RAG Assistant", page_icon="⚛️", layout="wide")
@@ -24,7 +24,7 @@ with st.sidebar:
             st.session_state.random_fact_requested = False
 
     st.divider()
-    st.caption("Engine: Groq + FastEmbed")
+    st.caption("Engine: Groq + Hugging Face API")
     st.caption(f"Embeddings: `{EMBEDDING_MODEL}`")
     st.caption(f"LLM: `{LANGUAGE_MODEL}`")
 
@@ -32,31 +32,34 @@ with st.sidebar:
 st.title("⚛️ Particle Physics RAG Assistant")
 st.write("Ask any question about particle physics! This app retrieves relevant facts from a local vector database and uses a fast cloud LLM via Groq to generate an answer.")
 
-# Check for API Key
-if "GROQ_API_KEY" in st.secrets:
-    api_key = st.secrets["GROQ_API_KEY"]
-else:
-    api_key = os.environ.get("GROQ_API_KEY")
+# Check for API Keys
+groq_api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
 
-if not api_key:
-    st.error("Missing GROQ_API_KEY. Please set it in Streamlit secrets or as an environment variable.")
+if not groq_api_key:
+    st.error("Missing GROQ_API_KEY. Please set it in Streamlit secrets.")
     st.stop()
 
 # Initialize Groq client
-client = Groq(api_key=api_key)
+client = Groq(api_key=groq_api_key)
 
 # --- 1. Vector DB Setup & Caching ---
-@st.cache_resource
-def load_embedding_model():
-    return TextEmbedding(model_name=EMBEDDING_MODEL)
+def get_embedding(text):
+    """Uses Hugging Face Inference API to get embeddings (No heavy libraries needed!)"""
+    api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
+    # We will use a public fallback token or no token if it's a free model, but providing one is better to avoid rate limits
+    # The all-MiniLM-L6-v2 model is freely accessible on HF Inference API without a token for low volume
+    headers = {}
+    response = requests.post(api_url, headers=headers, json={"inputs": text})
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"HF API Error: {response.text}")
 
 @st.cache_resource
 def initialize_vector_db():
     """Loads the dataset and computes embeddings once, caching the results."""
     
-    # Check if file exists to prevent crashing
     if not os.path.exists(DATASET_PATH):
-        # Creating a fallback file for demonstration if it doesn't exist
         with open(DATASET_PATH, 'w', encoding="utf-8") as f:
             f.write("1. The Standard Model of particle physics classifies all known elementary particles.\n")
             f.write("2. Quarks are elementary particles that combine to form hadrons, such as protons and neutrons.\n")
@@ -69,27 +72,25 @@ def initialize_vector_db():
     
     vector_db = []
     
-    # Progress bar for visual feedback during startup embedding generation
     status_text = st.empty()
     progress_bar = st.progress(0)
-    
-    embedder = load_embedding_model()
     
     for i, chunk in enumerate(dataset):
         chunk = chunk.strip()
         if not chunk:
             continue
-        status_text.text(f"Embedding chunk {i+1}/{len(dataset)}...")
+        status_text.text(f"Embedding chunk {i+1}/{len(dataset)} via HuggingFace API...")
         try:
-            # fastembed returns an iterator of numpy arrays
-            embedding = list(embedder.embed([chunk]))[0].tolist()
+            embedding = get_embedding(chunk)
+            # If the API returns a list of lists, grab the first one
+            if isinstance(embedding[0], list):
+                embedding = embedding[0]
             vector_db.append((chunk, embedding))
         except Exception as e:
             st.error(f"Error generating embeddings: {e}")
             return [], dataset
         progress_bar.progress((i + 1) / len(dataset))
         
-    # Clear the loading indicators when done
     status_text.empty()
     progress_bar.empty()
     return vector_db, dataset
@@ -108,8 +109,9 @@ def cosine_similarity(a, b):
 # --- 3. Retriever ---
 def retrieve(query, vector_db, top_k=5):
     """Finds the top_k most relevant chunks for a given query."""
-    embedder = load_embedding_model()
-    query_embedding = list(embedder.embed([query]))[0].tolist()
+    raw_emb = get_embedding(query)
+    query_embedding = raw_emb[0] if isinstance(raw_emb[0], list) else raw_emb
+    
     similarities = []
     for chunk, embedding in vector_db:
         similarity = cosine_similarity(query_embedding, embedding)
@@ -128,7 +130,6 @@ else:
 
 # --- Random Fact Handler ---
 if st.session_state.random_fact_requested and raw_dataset:
-    # Filter out empty lines
     valid_facts = [fact.strip() for fact in raw_dataset if fact.strip()]
     if valid_facts:
         random_fact = random.choice(valid_facts)
@@ -140,18 +141,14 @@ if st.session_state.random_fact_requested and raw_dataset:
 st.divider()
 st.subheader("Ask a question")
 
-# Initialize chat history in session state
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-# Display existing chat messages
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Chat input
 if prompt := st.chat_input("e.g. What is the Higgs boson?"):
-    # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -162,24 +159,20 @@ if prompt := st.chat_input("e.g. What is the Higgs boson?"):
         with st.chat_message("assistant"):
             st.markdown(assistant_msg)
     else:
-        # Retrieve relevant context
         with st.spinner("Retrieving relevant facts..."):
             results = retrieve(prompt, vector_db, top_k=5)
             context = '\n'.join([f"- {chunk}" for chunk, score in results])
 
-        # Show retrieved context in an expander
         with st.expander("📚 Retrieved Context", expanded=False):
             for chunk, score in results:
                 st.markdown(f"- **[{score:.3f}]** {chunk}")
 
-        # Build the prompt with context
         system_prompt = f"""You are a helpful assistant that answers questions about particle physics using ONLY the context below.
 If the context does not contain the answer, say "I don't have enough information to answer that."
 
 Context:
 {context}"""
 
-        # Generate response from LLM
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:

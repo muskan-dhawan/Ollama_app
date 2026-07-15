@@ -1,4 +1,4 @@
-fastembed
+requests
 groq
 pandas
 numpy
