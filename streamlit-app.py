@@ -66,8 +66,12 @@ else:
 
 # --- 2. Pure Python TF-IDF Retriever ---
 def retrieve(query, dataset, top_k=3):
+    def stem(w):
+        return w[:-1] if len(w) > 3 and w.endswith('s') and not w.endswith('ss') else w
+
     def tokenize(text):
-        return [w.strip('.,?!()[]{}"\'') for w in text.lower().split() if w.strip('.,?!()[]{}"\'')]
+        words = [w.strip('.,?!()[]{}"\'') for w in text.lower().split() if w.strip('.,?!()[]{}"\'')]
+        return [stem(w) for w in words]
     
     tokenized_dataset = [tokenize(doc) for doc in dataset]
     query_tokens = tokenize(query)
