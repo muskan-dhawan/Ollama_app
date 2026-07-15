@@ -1,4 +1,4 @@
-# Cricket Knowledge Assistant (Ollama RAG Demo)
+# OLLAMA_ APP (CRICKET FACTS)
 
 A Streamlit-based Retrieval-Augmented Generation (RAG) application that uses a local [Ollama](https://ollama.com/) instance to answer queries based on a provided knowledge base (`cricket-facts.txt`).
 
