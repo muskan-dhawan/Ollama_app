@@ -1,6 +1,6 @@
-# Ollama RAG Demo
+# Cricket Knowledge Assistant (Ollama RAG Demo)
 
-A Streamlit-based Retrieval-Augmented Generation (RAG) application that uses a local [Ollama](https://ollama.com/) instance to answer queries based on a provided knowledge base (`cat-facts.txt`).
+A Streamlit-based Retrieval-Augmented Generation (RAG) application that uses a local [Ollama](https://ollama.com/) instance to answer queries based on a provided knowledge base (`cricket-facts.txt`).
 
 ## Features
 - **Local Embeddings**: Computes text embeddings locally using the `bge-base-en-v1.5-gguf` model via Ollama.
@@ -28,7 +28,7 @@ streamlit run streamlit-app.py
 ```
 
 ## How It Works
-1. Upon starting, the app loads `cat-facts.txt` and computes embeddings for each chunk using Ollama.
+1. Upon starting, the app loads `cricket-facts.txt` and computes embeddings for each chunk using Ollama.
 2. When you submit a question, it generates an embedding for your query.
 3. The app finds the top matching facts using cosine similarity.
 4. The retrieved context is passed alongside your query to the Llama 3.2 model to generate an accurate, context-aware answer.
