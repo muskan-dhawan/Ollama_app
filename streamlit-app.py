@@ -70,16 +70,23 @@ def cosine_similarity(a, b):
 
 ## Retrieval function that takes a user query, computes its embedding, and finds the most similar chunks in the VECTOR_DB based on cosine similarity.
 def retrieve(query, top_n=3):
-  query_embedding = ollama.embed(model=EMBEDDING_MODEL, input=query)['embeddings'][0]
-  # temporary list to store (chunk, similarity) pairs
-  similarities = []
-  for chunk, embedding in VECTOR_DB:
-    similarity = cosine_similarity(query_embedding, embedding)
-    similarities.append((chunk, similarity))
-  # sort by similarity in descending order, because higher similarity means more relevant chunks
-  similarities.sort(key=lambda x: x[1], reverse=True)
-  # finally, return the top N most relevant chunks
-  return similarities[:top_n]
+    if not VECTOR_DB:
+        return []
+        
+    try:
+        query_embedding = ollama.embed(model=EMBEDDING_MODEL, input=query)['embeddings'][0]
+    except Exception as e:
+        return []
+        
+    # temporary list to store (chunk, similarity) pairs
+    similarities = []
+    for chunk, embedding in VECTOR_DB:
+        similarity = cosine_similarity(query_embedding, embedding)
+        similarities.append((chunk, similarity))
+    # sort by similarity in descending order, because higher similarity means more relevant chunks
+    similarities.sort(key=lambda x: x[1], reverse=True)
+    # finally, return the top N most relevant chunks
+    return similarities[:top_n]
 
 
 # --- 3. UI and Interaction ---
@@ -87,7 +94,10 @@ def retrieve(query, top_n=3):
 # Sidebar to show the retrieved context chunks behind the scenes
 with st.sidebar:
     st.header("Database Info")
-    st.success(f"Loaded {len(VECTOR_DB)} items from dataset.")
+    if VECTOR_DB:
+        st.success(f"Loaded {len(VECTOR_DB)} items from dataset.")
+    else:
+        st.warning("⚠️ Running in Cloud Mode (No local Ollama detected). Responses will be simulated.")
     st.markdown("---")
     st.subheader("Retrieved Context Window")
     context_placeholder = st.empty()
@@ -123,23 +133,33 @@ Context:
     full_response = ""
     
     try:
-        stream = ollama.chat(
-            model=LANGUAGE_MODEL,
-            messages=[
-                {'role': 'system', 'content': instruction_prompt},
-                {'role': 'user', 'content': input_query},
-            ],
-            stream=True,
-        )
-        
-        # Iterate over stream chunks and dynamically update the UI
-        for chunk in stream:
-            token = chunk['message']['content']
-            full_response += token
-            response_placeholder.markdown(full_response + "▌")
+        if not VECTOR_DB:
+            # Fallback if Ollama isn't running (like on Streamlit Cloud)
+            import time
+            fallback_text = "I am currently deployed in the cloud without a local Ollama engine, so I can't generate a real AI response! But here is a fun cricket fact: Sachin Tendulkar scored 100 international centuries."
+            for char in fallback_text:
+                full_response += char
+                response_placeholder.markdown(full_response + "▌")
+                time.sleep(0.02)
+            response_placeholder.markdown(full_response)
+        else:
+            stream = ollama.chat(
+                model=LANGUAGE_MODEL,
+                messages=[
+                    {'role': 'system', 'content': instruction_prompt},
+                    {'role': 'user', 'content': input_query},
+                ],
+                stream=True,
+            )
             
-        # Final update to remove the cursor icon
-        response_placeholder.markdown(full_response)
+            # Iterate over stream chunks and dynamically update the UI
+            for chunk in stream:
+                token = chunk['message']['content']
+                full_response += token
+                response_placeholder.markdown(full_response + "▌")
+                
+            # Final update to remove the cursor icon
+            response_placeholder.markdown(full_response)
         
     except Exception as e:
         st.error(f"Error generating chat response: {e}")
