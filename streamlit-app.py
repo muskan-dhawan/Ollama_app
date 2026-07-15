@@ -2,9 +2,12 @@ import streamlit as st
 import ollama
 import os
 
-st.set_page_config(page_title="Ollama RAG Demo",layout="centered")
-st.title("Ollama Retrieval-Augmented Generation Demo")
-st.write("This is a simple demo of how to use Ollama for retrieval-augmented generation. The app will take a user query, retrieve relevant chunks of information from a vector database, and then use those chunks as context to generate a response from a language model.")
+st.set_page_config(page_title="Cricket RAG Assistant", layout="centered", page_icon="🏏")
+st.title("🏏 Cricket Knowledge Assistant")
+st.markdown("""
+Welcome to the **Cricket Knowledge Assistant**! 
+This app uses a local LLM via **Ollama** to answer your questions based on a specific knowledge base about cricket.
+""")
 
 # Model Configurations
 EMBEDDING_MODEL = 'hf.co/CompendiumLabs/bge-base-en-v1.5-gguf'
@@ -14,17 +17,15 @@ LANGUAGE_MODEL = 'hf.co/bartowski/Llama-3.2-1B-Instruct-GGUF'
 @st.cache_resource
 def initialize_vector_db():
     """Loads the dataset and computes embeddings once, caching the results."""
-    dataset_path = 'cat-facts.txt'
+    dataset_path = 'cricket-facts.txt'
     
     # Check if file exists to prevent crashing
     if not os.path.exists(dataset_path):
         # Creating a fallback file for demonstration if it doesn't exist
         with open(dataset_path, 'w') as f:
-            f.write("Cats sleep for 12-16 hours a day to conserve energy.\n")
-            f.write("A group of cats is called a clowder.\n")
-            f.write("Cats use their whiskers to detect if they can fit through a space.\n")
-            f.write("Cats have over 20 muscles that control their ears.\n")
-            f.write("The first cat in space was a French cat named Félicette in 1963.\n")
+            f.write("Cricket is believed to have been invented in South East England in the 16th century.\n")
+            f.write("A cricket pitch is exactly 22 yards (20.12 meters) long between the wickets.\n")
+            f.write("Sachin Tendulkar holds the record for the most runs in international cricket.\n")
 
     with open(dataset_path, 'r',encoding="utf-8") as file:
         dataset = file.readlines()
@@ -94,7 +95,8 @@ with st.sidebar:
 
 
 # User Input
-input_query = st.text_input("Ask me a question about cats:", placeholder="e.g., How long do cats sleep?")
+st.markdown("### 🏏 Ask Away!")
+input_query = st.text_input("Ask me a question about cricket:", placeholder="e.g., What is the length of a cricket pitch?")
 
 if input_query:
     # Perform Retrieval
@@ -107,12 +109,14 @@ if input_query:
             st.markdown("---")
 
     # Construct the instruction prompt
-    instruction_prompt = f"""You are a helpful chatbot.
-Use only the following pieces of context to answer the question. Don't make up any new information:
+    instruction_prompt = f"""You are a helpful cricket expert chatbot.
+Use ONLY the following pieces of context to answer the question. Do not use outside knowledge. If the answer is not in the context, say you don't know based on the provided facts.
+
+Context:
 {'\n'.join([f' - {chunk}' for chunk, similarity in retrieved_knowledge])}
 """
 
-    st.subheader("Response:")
+    st.markdown("### 🤖 Response:")
     
     # Dynamic placeholder for streaming the response
     response_placeholder = st.empty()
