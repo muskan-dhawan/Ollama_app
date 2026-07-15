@@ -8,7 +8,7 @@ st.set_page_config(page_title="Particle Physics RAG Assistant", page_icon="âš›ï¸
 
 # Model Configurations
 EMBEDDING_MODEL = 'sentence-transformers/all-MiniLM-L6-v2'
-LANGUAGE_MODEL = 'llama3-8b-8192'
+LANGUAGE_MODEL = 'llama-3.1-8b-instant'
 DATASET_PATH = 'physics-facts.txt'
 
 # --- UI Layout: Sidebar ---
@@ -34,6 +34,7 @@ st.write("Ask any question about particle physics! This app retrieves relevant f
 
 # Check for API Keys
 groq_api_key = st.secrets.get("GROQ_API_KEY", os.environ.get("GROQ_API_KEY"))
+hf_token = st.secrets.get("HF_TOKEN", os.environ.get("HF_TOKEN", "")) # Ensure HF_TOKEN is in Streamlit secrets
 
 if not groq_api_key:
     st.error("Missing GROQ_API_KEY. Please set it in Streamlit secrets.")
@@ -42,22 +43,10 @@ if not groq_api_key:
 # Initialize Groq client
 client = Groq(api_key=groq_api_key)
 
-# --- 1. Vector DB Setup & Caching ---
-def get_embedding(text):
-    """Uses Hugging Face Inference API to get embeddings (No heavy libraries needed!)"""
-    api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
-    # We will use a public fallback token or no token if it's a free model, but providing one is better to avoid rate limits
-    # The all-MiniLM-L6-v2 model is freely accessible on HF Inference API without a token for low volume
-    headers = {}
-    response = requests.post(api_url, headers=headers, json={"inputs": text})
-    if response.status_code == 200:
-        return response.json()
-    else:
-        raise Exception(f"HF API Error: {response.text}")
-
+# --- 1. Vector DB Setup & Caching (Hugging Face API) ---
 @st.cache_resource
 def initialize_vector_db():
-    """Loads the dataset and computes embeddings once, caching the results."""
+    """Loads the dataset and computes embeddings via HF API, caching the results."""
     
     if not os.path.exists(DATASET_PATH):
         with open(DATASET_PATH, 'w', encoding="utf-8") as f:
@@ -75,16 +64,21 @@ def initialize_vector_db():
     status_text = st.empty()
     progress_bar = st.progress(0)
     
+    api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
+    headers = {"Authorization": f"Bearer {hf_token}"}
+    
     for i, chunk in enumerate(dataset):
         chunk = chunk.strip()
         if not chunk:
             continue
         status_text.text(f"Embedding chunk {i+1}/{len(dataset)} via HuggingFace API...")
         try:
-            embedding = get_embedding(chunk)
-            # If the API returns a list of lists, grab the first one
-            if isinstance(embedding[0], list):
-                embedding = embedding[0]
+            response = requests.post(api_url, headers=headers, json={"inputs": chunk, "options": {"wait_for_model": True}})
+            response.raise_for_status()
+            embedding = response.json()
+            # If the response is nested (e.g. [[...]]), extract the first element
+            if isinstance(embedding, list) and len(embedding) > 0 and isinstance(embedding[0], list):
+                 embedding = embedding[0]
             vector_db.append((chunk, embedding))
         except Exception as e:
             st.error(f"Error generating embeddings: {e}")
@@ -94,7 +88,6 @@ def initialize_vector_db():
     status_text.empty()
     progress_bar.empty()
     return vector_db, dataset
-
 
 # --- 2. Cosine Similarity ---
 def cosine_similarity(a, b):
@@ -108,17 +101,21 @@ def cosine_similarity(a, b):
 
 # --- 3. Retriever ---
 def retrieve(query, vector_db, top_k=5):
-    """Finds the top_k most relevant chunks for a given query."""
-    raw_emb = get_embedding(query)
-    query_embedding = raw_emb[0] if isinstance(raw_emb[0], list) else raw_emb
+    """Finds the top_k most relevant chunks for a given query via HF API."""
+    api_url = f"https://api-inference.huggingface.co/pipeline/feature-extraction/{EMBEDDING_MODEL}"
+    headers = {"Authorization": f"Bearer {hf_token}"}
     
+    response = requests.post(api_url, headers=headers, json={"inputs": query, "options": {"wait_for_model": True}})
+    query_embedding = response.json()
+    if isinstance(query_embedding, list) and len(query_embedding) > 0 and isinstance(query_embedding[0], list):
+        query_embedding = query_embedding[0]
+            
     similarities = []
     for chunk, embedding in vector_db:
         similarity = cosine_similarity(query_embedding, embedding)
         similarities.append((chunk, similarity))
     similarities.sort(key=lambda x: x[1], reverse=True)
     return similarities[:top_k]
-
 
 # --- 4. Initialize DB on first load ---
 vector_db, raw_dataset = initialize_vector_db()
