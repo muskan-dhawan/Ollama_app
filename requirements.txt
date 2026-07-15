@@ -1,4 +1,5 @@
-ollama
+groq
+sentence-transformers
 pandas
 numpy
 matplotlib

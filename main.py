@@ -1,4 +1,6 @@
-import ollama
+import os
+from sentence_transformers import SentenceTransformer
+from groq import Groq
 
 def cosine_similarity(a, b):
     """Computes the cosine similarity between two vectors."""
@@ -9,13 +11,20 @@ def cosine_similarity(a, b):
         return 0
     return dot_product / (norm_a * norm_b)
 
-## Using ollama's embedding API to create vector representations of the text chunks 
-EMBEDDING_MODEL = 'nomic-embed-text'
-LANGUAGE_MODEL = 'llama3.2:1b'
+EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
+LANGUAGE_MODEL = 'llama3-8b-8192'
 DATASET_PATH = 'physics-facts.txt'
 
-# Each element in the VECTOR_DB will be a tuple (chunk, embedding)
 VECTOR_DB = []
+embedder = SentenceTransformer(EMBEDDING_MODEL)
+
+# Setup Groq Client
+api_key = os.environ.get("GROQ_API_KEY")
+if not api_key:
+    print("Error: Missing GROQ_API_KEY environment variable. Please set it before running.")
+    exit(1)
+
+client = Groq(api_key=api_key)
 
 def load_and_embed():
     """Loads the physics facts dataset and computes embeddings for each chunk."""
@@ -30,9 +39,7 @@ def load_and_embed():
                 continue
             
             print(f"Generating embedding for chunk {i+1}/{len(dataset)}...")
-            # ollama.embed returns a dict like {'embeddings': [[...]]}
-            response = ollama.embed(model=EMBEDDING_MODEL, input=chunk)
-            embedding = response['embeddings'][0]
+            embedding = embedder.encode(chunk).tolist()
             
             VECTOR_DB.append((chunk, embedding))
         print("Vector Database initialization complete!")
@@ -40,20 +47,15 @@ def load_and_embed():
         print(f"Error: Could not find {DATASET_PATH}. Please make sure it exists.")
         exit(1)
 
-
 def retrieve(query, top_k=3):
     """Finds the top_k most relevant chunks for a given query."""
-    # Embed the user query
-    query_response = ollama.embed(model=EMBEDDING_MODEL, input=query)
-    query_embedding = query_response['embeddings'][0]
+    query_embedding = embedder.encode(query).tolist()
     
     similarities = []
-    # Compare query embedding with all stored chunk embeddings
     for chunk, embedding in VECTOR_DB:
         similarity = cosine_similarity(query_embedding, embedding)
         similarities.append((chunk, similarity))
         
-    # Sort by similarity score in descending order
     similarities.sort(key=lambda x: x[1], reverse=True)
     return similarities[:top_k]
 
@@ -70,34 +72,29 @@ def main():
         if prompt.lower() in ['exit', 'quit']:
             break
             
-        # 1. Retrieve relevant facts
         results = retrieve(prompt)
         print("\n--- Retrieved Facts ---")
         for chunk, score in results:
             print(f"[{score:.3f}] {chunk}")
             
-        # Combine the retrieved chunks into a single context string
         context = '\n'.join([chunk for chunk, score in results])
         
-        # 2. Build the system prompt
         system_prompt = f"""You are a helpful assistant that answers questions about particle physics using ONLY the context below.
 If the context does not contain the answer, say "I don't have enough information to answer that."
 
 Context:
 {context}"""
         
-        # 3. Generate response using the local LLM
         print("\n--- Generating Answer ---")
         try:
-            response = ollama.chat(
+            response = client.chat.completions.create(
                 model=LANGUAGE_MODEL,
                 messages=[
                     {'role': 'system', 'content': system_prompt},
                     {'role': 'user', 'content': prompt},
-                ],
-                options={'num_ctx': 2048, 'num_thread': 4}
+                ]
             )
-            print(f"AI: {response['message']['content']}\n")
+            print(f"AI: {response.choices[0].message.content}\n")
         except Exception as e:
             print(f"Error generating response: {e}\n")
 

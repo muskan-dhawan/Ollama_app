@@ -1,13 +1,14 @@
 import streamlit as st
-import ollama
 import os
 import random
+from sentence_transformers import SentenceTransformer
+from groq import Groq
 
 st.set_page_config(page_title="Particle Physics RAG Assistant", page_icon="⚛️", layout="wide")
 
 # Model Configurations
-EMBEDDING_MODEL = 'nomic-embed-text'
-LANGUAGE_MODEL = 'llama3.2:1b'
+EMBEDDING_MODEL = 'all-MiniLM-L6-v2'
+LANGUAGE_MODEL = 'llama3-8b-8192'
 DATASET_PATH = 'physics-facts.txt'
 
 # --- UI Layout: Sidebar ---
@@ -23,15 +24,32 @@ with st.sidebar:
             st.session_state.random_fact_requested = False
 
     st.divider()
-    st.caption("Engine: Local Ollama")
+    st.caption("Engine: Groq + Sentence Transformers")
     st.caption(f"Embeddings: `{EMBEDDING_MODEL}`")
     st.caption(f"LLM: `{LANGUAGE_MODEL}`")
 
 # Main Page
 st.title("⚛️ Particle Physics RAG Assistant")
-st.write("Ask any question about particle physics! This app retrieves relevant facts from a local vector database and uses a local LLM via Ollama to generate an answer.")
+st.write("Ask any question about particle physics! This app retrieves relevant facts from a local vector database and uses a fast cloud LLM via Groq to generate an answer.")
+
+# Check for API Key
+if "GROQ_API_KEY" in st.secrets:
+    api_key = st.secrets["GROQ_API_KEY"]
+else:
+    api_key = os.environ.get("GROQ_API_KEY")
+
+if not api_key:
+    st.error("Missing GROQ_API_KEY. Please set it in Streamlit secrets or as an environment variable.")
+    st.stop()
+
+# Initialize Groq client
+client = Groq(api_key=api_key)
 
 # --- 1. Vector DB Setup & Caching ---
+@st.cache_resource
+def load_embedding_model():
+    return SentenceTransformer(EMBEDDING_MODEL)
+
 @st.cache_resource
 def initialize_vector_db():
     """Loads the dataset and computes embeddings once, caching the results."""
@@ -55,16 +73,18 @@ def initialize_vector_db():
     status_text = st.empty()
     progress_bar = st.progress(0)
     
+    embedder = load_embedding_model()
+    
     for i, chunk in enumerate(dataset):
         chunk = chunk.strip()
         if not chunk:
             continue
         status_text.text(f"Embedding chunk {i+1}/{len(dataset)}...")
         try:
-            embedding = ollama.embed(model=EMBEDDING_MODEL, input=chunk)['embeddings'][0]
+            embedding = embedder.encode(chunk).tolist()
             vector_db.append((chunk, embedding))
         except Exception as e:
-            st.error(f"Error connecting to Ollama: {e}. Make sure Ollama is running.")
+            st.error(f"Error generating embeddings: {e}")
             return [], dataset
         progress_bar.progress((i + 1) / len(dataset))
         
@@ -87,7 +107,8 @@ def cosine_similarity(a, b):
 # --- 3. Retriever ---
 def retrieve(query, vector_db, top_k=5):
     """Finds the top_k most relevant chunks for a given query."""
-    query_embedding = ollama.embed(model=EMBEDDING_MODEL, input=query)['embeddings'][0]
+    embedder = load_embedding_model()
+    query_embedding = embedder.encode(query).tolist()
     similarities = []
     for chunk, embedding in vector_db:
         similarity = cosine_similarity(query_embedding, embedding)
@@ -102,7 +123,7 @@ vector_db, raw_dataset = initialize_vector_db()
 if vector_db:
     st.success(f"✅ Vector DB loaded with {len(vector_db)} physics facts.")
 else:
-    st.warning("⚠️ Vector DB is empty. Check your Ollama connection and embedding model.")
+    st.warning("⚠️ Vector DB is empty. Check your model and dataset.")
 
 # --- Random Fact Handler ---
 if st.session_state.random_fact_requested and raw_dataset:
@@ -161,16 +182,14 @@ Context:
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
                 try:
-                    response = ollama.chat(
+                    response = client.chat.completions.create(
                         model=LANGUAGE_MODEL,
                         messages=[
                             {'role': 'system', 'content': system_prompt},
                             {'role': 'user', 'content': prompt},
-                        ],
-                        # Explicitly setting num_ctx to prevent Windows stack overflow in llama3.2:1b
-                        options={'num_ctx': 2048, 'num_thread': 4}
+                        ]
                     )
-                    assistant_msg = response['message']['content']
+                    assistant_msg = response.choices[0].message.content
                 except Exception as e:
                     assistant_msg = f"❌ Error generating response: {e}"
                 
