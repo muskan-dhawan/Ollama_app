@@ -9,7 +9,7 @@ st.set_page_config(page_title="Particle Physics RAG Assistant", page_icon="âš›ï¸
 
 # Model Configurations
 LANGUAGE_MODEL = 'llama-3.1-8b-instant'
-DATASET_PATH = 'physics-facts.txt'
+DATASET_PATH = 'particle_physics_facts.txt'
 
 # --- UI Layout: Sidebar ---
 with st.sidebar:
@@ -46,13 +46,7 @@ client = Groq(api_key=groq_api_key)
 @st.cache_data
 def load_dataset():
     if not os.path.exists(DATASET_PATH):
-        with open(DATASET_PATH, 'w', encoding="utf-8") as f:
-            f.write("1. The Standard Model of particle physics classifies all known elementary particles.\n")
-            f.write("2. Quarks are elementary particles that combine to form hadrons, such as protons and neutrons.\n")
-            f.write("3. There are six flavors of quarks: up, down, charm, strange, top, and bottom.\n")
-            f.write("4. Leptons include electrons, muons, tau particles, and their associated neutrinos.\n")
-            f.write("5. The Higgs boson is responsible for giving mass to other fundamental particles.\n")
-
+        return []
     with open(DATASET_PATH, 'r', encoding="utf-8") as file:
         dataset = [line.strip() for line in file.readlines() if line.strip()]
     return dataset
