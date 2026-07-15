@@ -143,8 +143,10 @@ if prompt := st.chat_input("e.g. What is the Higgs boson?"):
                 for chunk, score in valid_results:
                     st.markdown(f"- **[Score: {score:.3f}]** {chunk}")
 
-        system_prompt = f"""You are a helpful assistant that answers questions about particle physics using ONLY the context below.
-If the context does not contain the answer, say "I don't have enough information to answer that."
+        system_prompt = f"""You are an expert physics assistant. 
+Use the following retrieved context to answer the user's question accurately.
+If the context contains relevant information, prioritize it.
+If the context does not contain the answer, use your own extensive knowledge of physics to provide a detailed and accurate answer.
 
 Context:
 {context}"""
