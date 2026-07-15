@@ -3,4 +3,4 @@ sentence-transformers
 pandas
 numpy
 matplotlib
-streamlit
+streamlit# Force rebuild
